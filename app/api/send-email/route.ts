@@ -22,8 +22,90 @@ interface EmailRequest {
   message: string;
 }
 
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = 3;
+const rateLimitStore = new Map<string, RateLimitEntry>();
+
+function getClientIdentifier(request: NextRequest): string {
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    const firstIp = forwardedFor.split(",")[0]?.trim();
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) {
+    return realIp;
+  }
+
+  return "unknown-client";
+}
+
+function checkRateLimit(clientId: string): {
+  allowed: boolean;
+  retryAfterSeconds: number;
+} {
+  const now = Date.now();
+  const current = rateLimitStore.get(clientId);
+
+  if (!current || now > current.resetAt) {
+    rateLimitStore.set(clientId, {
+      count: 1,
+      resetAt: now + RATE_LIMIT_WINDOW_MS,
+    });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
+  if (current.count >= RATE_LIMIT_MAX_REQUESTS) {
+    const retryAfterSeconds = Math.ceil((current.resetAt - now) / 1000);
+    return { allowed: false, retryAfterSeconds };
+  }
+
+  rateLimitStore.set(clientId, {
+    count: current.count + 1,
+    resetAt: current.resetAt,
+  });
+
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+function cleanupExpiredRateLimitEntries(): void {
+  const now = Date.now();
+
+  for (const [clientId, entry] of rateLimitStore.entries()) {
+    if (now > entry.resetAt) {
+      rateLimitStore.delete(clientId);
+    }
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
+    cleanupExpiredRateLimitEntries();
+    const clientId = getClientIdentifier(request);
+    const rateLimit = checkRateLimit(clientId);
+
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          message: `Too many messages sent. Please try again in ${rateLimit.retryAfterSeconds} seconds.`,
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(rateLimit.retryAfterSeconds),
+          },
+        },
+      );
+    }
+
     const body: EmailRequest = await request.json();
 
     // Validate required fields

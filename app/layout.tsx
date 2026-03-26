@@ -88,9 +88,9 @@ export const metadata: Metadata = {
     images: ["https://shijay.dev/images/profile3.jpg"],
   },
   icons: {
-    icon: "/icon.ico",
-    shortcut: "/icon.ico",
-    apple: "/icon.ico",
+    icon: "/iconOrange.ico",
+    shortcut: "/iconOrange.ico",
+    apple: "/iconOrange.ico",
   },
   category: "Technology",
   classification: "Portfolio",
